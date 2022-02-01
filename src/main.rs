@@ -13,6 +13,8 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::process;
 use std::net::Shutdown;
+use std::sync::mpsc::{SyncSender, Receiver};
+use std::sync::mpsc;
 
 fn xenc(i: usize) -> String {
 	let istr = i.to_string();
@@ -48,15 +50,23 @@ fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 		if len_read == 0 {
 			if die_hard  {
 				process::exit(0);
+			} else {
+				dead_inp.shutdown(Shutdown::Both);
+				outp.shutdown(Shutdown::Both);
+				break;
 			}
-		} else {
-			dead_inp.shutdown(Shutdown::Both);
-			outp.shutdown(Shutdown::Both);
-			break;
 		}
 		outp.write_all(bytes).unwrap();
 		buf.consume(len_read);
 
+	}
+}
+
+fn
+rendevous_forever(sock: TcpListener, outchan: SyncSender<TcpStream>) {
+	loop {
+		let (strm, _) = sock.accept().unwrap();
+		outchan.send(strm).unwrap();
 	}
 }
 
@@ -125,6 +135,36 @@ println!("{:?}", xinetd_stream);
 	thread::spawn(|| {
 		shovel(shovel_ee, shovel_er, true);
 	});
+	
+/*
+	let (txer, rxer): (SyncSender<TcpStream>, Receiver<TcpStream>) = mpsc::sync_channel(4);
+	let (txee, rxee): (SyncSender<TcpStream>, Receiver<TcpStream>) = mpsc::sync_channel(4);
+
+	thread::spawn(|| {
+		rendevous_forever(caller_sock, txer);
+	});
+	thread::spawn(|| {
+		rendevous_forever(callee_sock, txee);
+	});
+*/
+	// try this simpler technique, rather than accepting in arbitrary
+	// order, and pairing them. instead, accept 1 from caller, then 1 from
+	// callee, and pair those. this won't work quite as well if the
+	// the connections don't come in pairs (like maybe one gets stuck
+	// we would be stuck waiting for the next connect that might never come.)
+
+	loop {
+		let (caller_media, _) = caller_sock.accept().unwrap();
+		let (callee_media, _) = callee_sock.accept().unwrap();
+		let shovel_er_media = caller_media.try_clone().expect("can't clone");
+		let shovel_ee_media = callee_media.try_clone().expect("can't clone");
+		thread::spawn(|| {
+			shovel(caller_media, callee_media, false);
+		});
+		thread::spawn(|| {
+			shovel(shovel_ee_media, shovel_er_media, false);
+		});
+	}
 
 	loop { zzz();}
 }
