@@ -1,20 +1,19 @@
 use std::env;
 use std::path::Path;
 use std::fs;
-use std::net;
 use std::net::TcpListener;
 use std::net::TcpStream;
-use std::os::unix::io::{FromRawFd, IntoRawFd, RawFd};
 use std::io::Write;
-use vigil::Vigil;
 use std::time::Duration;
 use std::thread;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::process;
 use std::net::Shutdown;
-use std::sync::mpsc::{SyncSender, Receiver};
-use std::sync::mpsc;
+use log::info;
+//use std::sync::mpsc::{SyncSender, Receiver};
+//use std::sync::mpsc;
+
 
 fn xenc(i: usize) -> String {
 	let istr = i.to_string();
@@ -30,18 +29,17 @@ zzz() {
 
 fn
 die() {
-println!("DIE");
+	println!("DIE");
 }
 
 fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 	
-	let (death_vigil, _) = Vigil::create(1200 * 1000, Some(Box::new(die)), None, None);
 	let dead_inp = inp.try_clone().expect("can't clone in shovel");
 	let mut buf = BufReader::new(inp);
 	
 	loop {
 		if die_hard {
-			death_vigil.notify();
+			//death_vigil.notify();
 		}
 		// if this unwrap fails, does it zap the thread? or the
 		// whole process?
@@ -51,8 +49,8 @@ fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 			if die_hard  {
 				process::exit(0);
 			} else {
-				dead_inp.shutdown(Shutdown::Both);
-				outp.shutdown(Shutdown::Both);
+				let _ = dead_inp.shutdown(Shutdown::Both);
+				let _ = outp.shutdown(Shutdown::Both);
 				break;
 			}
 		}
@@ -62,6 +60,7 @@ fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 	}
 }
 
+/*
 fn
 rendevous_forever(sock: TcpListener, outchan: SyncSender<TcpStream>) {
 	loop {
@@ -69,12 +68,11 @@ rendevous_forever(sock: TcpListener, outchan: SyncSender<TcpStream>) {
 		outchan.send(strm).unwrap();
 	}
 }
+*/
 
 fn main() {
 
-	let (startup_vigil, _thread) = Vigil::create(1000, Some(Box::new(die)), None, Some(Box::new(die)));
-	startup_vigil.notify();
-	//zzz();
+	env_logger::init();
 
 	let args: Vec<String> = env::args().collect();
 println!("{:?}", args);
@@ -119,10 +117,6 @@ println!("{:?}", xinetd_stream);
 	xinetd_stream.write_all(buf).unwrap();
 */
 
-	startup_vigil.notify();
-
-	startup_vigil.set_interval(10000);
-
 	let (caller_ctrl, _) = caller_sock.accept().unwrap();
 	let (callee_ctrl, _) = callee_sock.accept().unwrap();
 
@@ -147,6 +141,9 @@ println!("{:?}", xinetd_stream);
 		rendevous_forever(callee_sock, txee);
 	});
 */
+	// die after an hour, not matter what is going on
+	// just avoid people turning it on and walking away
+
 	// try this simpler technique, rather than accepting in arbitrary
 	// order, and pairing them. instead, accept 1 from caller, then 1 from
 	// callee, and pair those. this won't work quite as well if the
@@ -155,7 +152,9 @@ println!("{:?}", xinetd_stream);
 
 	loop {
 		let (caller_media, _) = caller_sock.accept().unwrap();
+info!("got 1 {:?}", caller_media);
 		let (callee_media, _) = callee_sock.accept().unwrap();
+info!("got 2 {:?}", callee_media);
 		let shovel_er_media = caller_media.try_clone().expect("can't clone");
 		let shovel_ee_media = callee_media.try_clone().expect("can't clone");
 		thread::spawn(|| {
@@ -166,5 +165,5 @@ println!("{:?}", xinetd_stream);
 		});
 	}
 
-	loop { zzz();}
+	//loop { zzz();}
 }
