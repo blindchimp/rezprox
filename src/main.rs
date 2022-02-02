@@ -14,6 +14,47 @@ use log::info;
 //use std::sync::mpsc::{SyncSender, Receiver};
 //use std::sync::mpsc;
 
+use crossbeam::channel::{unbounded, RecvTimeoutError};
+use crossbeam::channel::{Sender, Receiver};
+
+
+struct Watchdog {
+	ticks_left: i32,
+	stop: bool,
+	cmd: Receiver<i32>,
+	sender: Sender<i32>,
+}
+
+impl Watchdog {
+    fn new(ticks_init: i32) -> Self { 
+		let (tx, rx) : (Sender<i32>, Receiver<i32>) = unbounded();
+		Self { ticks_left: ticks_init, stop: false, sender: tx, cmd: rx } 
+	}
+}
+
+	fn start(wd: *Watchdog) {
+		let ccmd = (*wd).cmd.clone();
+		thread::spawn(move || {
+			loop {
+				if wd.ticks_left == 0 {
+					process::exit(1);
+				}
+				let new_ticks = ccmd.recv_timeout(Duration::from_secs(1)).unwrap_or(0);
+				if new_ticks == 0 {
+					wd.ticks_left =- 1;
+				} else {
+					wd.ticks_left = new_ticks;
+				}
+			}
+		});
+	}
+
+
+	
+
+fn reset(wd: &Watchdog, new_ticks: i32) {
+		wd.sender.try_send(new_ticks).unwrap();
+}
 
 fn xenc(i: usize) -> String {
 	let istr = i.to_string();
@@ -27,8 +68,7 @@ zzz() {
     thread::sleep(Duration::from_millis(4000))
 }
 
-fn
-die() {
+fn die() {
 	println!("DIE");
 }
 
