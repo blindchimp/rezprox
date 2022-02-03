@@ -64,7 +64,7 @@ fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 	let mut buf = BufReader::new(inp);
 	let (shovel_wd_tx, shovel_wd_cmd) = unbounded();
 	if die_hard {
-		thread::spawn(|| {watchdog(shovel_wd_cmd, 10 * 60);});
+		thread::spawn(|| {watchdog(shovel_wd_cmd, 3 * 60);});
 	}
 	
 	loop {
@@ -105,11 +105,11 @@ fn main() {
 	env_logger::init();
 	
 	let (startup_wd_tx, wd_rx) = unbounded();
-	thread::spawn(|| {watchdog(wd_rx, 60);
+	thread::spawn(|| {watchdog(wd_rx, 4);
 	});
 
 	let args: Vec<String> = env::args().collect();
-println!("{:?}", args);
+info!("{:?}", args);
 
 	assert_eq!(args.len(), 3);
 
@@ -122,10 +122,10 @@ println!("{:?}", args);
 	assert!(env::set_current_dir(&p).is_ok());
 
 	let hostip = fs::read_to_string("cfg/HostIP").unwrap_or(String::from("127.0.0.1")).replace("\n", "");
-	println!("{:?}", hostip);
+	info!("{:?}", hostip);
 
 	let listenaddr = format!("{}:0", hostip);
-	println!("{:?}", listenaddr);
+	info!("{:?}", listenaddr);
 
 	let caller_sock = TcpListener::bind(listenaddr.clone()).unwrap();
 	let callee_sock = TcpListener::bind(listenaddr).unwrap();
@@ -140,14 +140,16 @@ println!("{:?}", args);
 	let len_callee = callee_str.len();
 
 	let faux_xferout = format!("0901202{}{}02{}{}", xenc(len_caller), caller_str, xenc(len_callee), callee_str);
-println!("{:?}", faux_xferout);
+info!("{:?}", faux_xferout);
 
 	let mut xinetd_stream  = unsafe { TcpStream::from_raw_fd(0) } ;
-println!("{:?}", xinetd_stream);
+info!("{:?}", xinetd_stream);
 
 	let buf = faux_xferout.as_bytes();
 
 	xinetd_stream.write_all(buf).unwrap();
+
+	reset(&startup_wd_tx, 30);
 
 	let (caller_ctrl, _) = caller_sock.accept().unwrap();
 	let (callee_ctrl, _) = callee_sock.accept().unwrap();
