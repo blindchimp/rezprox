@@ -3,6 +3,7 @@ use std::path::Path;
 use std::fs;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::os::unix::io::FromRawFd;
 use std::io::Write;
 use std::time::Duration;
 use std::thread;
@@ -11,49 +12,34 @@ use std::io::BufReader;
 use std::process;
 use std::net::Shutdown;
 use log::info;
-//use std::sync::mpsc::{SyncSender, Receiver};
-//use std::sync::mpsc;
 
-use crossbeam::channel::{unbounded, RecvTimeoutError};
+use crossbeam::channel::unbounded;
 use crossbeam::channel::{Sender, Receiver};
 
-
-struct Watchdog {
-	ticks_left: i32,
-	stop: bool,
-	cmd: Receiver<i32>,
-	sender: Sender<i32>,
-}
-
-impl Watchdog {
-    fn new(ticks_init: i32) -> Self { 
-		let (tx, rx) : (Sender<i32>, Receiver<i32>) = unbounded();
-		Self { ticks_left: ticks_init, stop: false, sender: tx, cmd: rx } 
+fn watchdog(cmd: Receiver<i32>, init_ticks: i32) {
+	let mut ticks_left = init_ticks;
+	loop {
+		if ticks_left == 0 {
+			process::exit(1);
+		}
+		let new_ticks = cmd.recv_timeout(Duration::from_secs(1)).unwrap_or(0);
+		if new_ticks == 0 {
+			ticks_left -= 1;
+info!("TIMEOUT {}", ticks_left);
+		} else if new_ticks == -1 {
+info!("stop");
+			break;
+		}
+		else {
+			ticks_left = new_ticks;
+info!("reset {}", new_ticks);
+		}
 	}
 }
 
-	fn start(wd: *Watchdog) {
-		let ccmd = (*wd).cmd.clone();
-		thread::spawn(move || {
-			loop {
-				if wd.ticks_left == 0 {
-					process::exit(1);
-				}
-				let new_ticks = ccmd.recv_timeout(Duration::from_secs(1)).unwrap_or(0);
-				if new_ticks == 0 {
-					wd.ticks_left =- 1;
-				} else {
-					wd.ticks_left = new_ticks;
-				}
-			}
-		});
-	}
 
-
-	
-
-fn reset(wd: &Watchdog, new_ticks: i32) {
-		wd.sender.try_send(new_ticks).unwrap();
+fn reset(sender: &Sender<i32>, new_ticks: i32) {
+	sender.try_send(new_ticks).unwrap();
 }
 
 fn xenc(i: usize) -> String {
@@ -76,10 +62,14 @@ fn shovel(inp: TcpStream, mut outp: TcpStream, die_hard: bool) {
 	
 	let dead_inp = inp.try_clone().expect("can't clone in shovel");
 	let mut buf = BufReader::new(inp);
+	let (shovel_wd_tx, shovel_wd_cmd) = unbounded();
+	if die_hard {
+		thread::spawn(|| {watchdog(shovel_wd_cmd, 10 * 60);});
+	}
 	
 	loop {
 		if die_hard {
-			//death_vigil.notify();
+			reset(&shovel_wd_tx, 10 * 60);
 		}
 		// if this unwrap fails, does it zap the thread? or the
 		// whole process?
@@ -113,6 +103,10 @@ rendevous_forever(sock: TcpListener, outchan: SyncSender<TcpStream>) {
 fn main() {
 
 	env_logger::init();
+	
+	let (startup_wd_tx, wd_rx) = unbounded();
+	thread::spawn(|| {watchdog(wd_rx, 60);
+	});
 
 	let args: Vec<String> = env::args().collect();
 println!("{:?}", args);
@@ -148,14 +142,12 @@ println!("{:?}", args);
 	let faux_xferout = format!("0901202{}{}02{}{}", xenc(len_caller), caller_str, xenc(len_callee), callee_str);
 println!("{:?}", faux_xferout);
 
-/*
 	let mut xinetd_stream  = unsafe { TcpStream::from_raw_fd(0) } ;
 println!("{:?}", xinetd_stream);
 
 	let buf = faux_xferout.as_bytes();
 
 	xinetd_stream.write_all(buf).unwrap();
-*/
 
 	let (caller_ctrl, _) = caller_sock.accept().unwrap();
 	let (callee_ctrl, _) = callee_sock.accept().unwrap();
@@ -170,19 +162,9 @@ println!("{:?}", xinetd_stream);
 		shovel(shovel_ee, shovel_er, true);
 	});
 	
-/*
-	let (txer, rxer): (SyncSender<TcpStream>, Receiver<TcpStream>) = mpsc::sync_channel(4);
-	let (txee, rxee): (SyncSender<TcpStream>, Receiver<TcpStream>) = mpsc::sync_channel(4);
-
-	thread::spawn(|| {
-		rendevous_forever(caller_sock, txer);
-	});
-	thread::spawn(|| {
-		rendevous_forever(callee_sock, txee);
-	});
-*/
 	// die after an hour, not matter what is going on
 	// just avoid people turning it on and walking away
+	reset(&startup_wd_tx, 3600);
 
 	// try this simpler technique, rather than accepting in arbitrary
 	// order, and pairing them. instead, accept 1 from caller, then 1 from
@@ -190,13 +172,20 @@ println!("{:?}", xinetd_stream);
 	// the connections don't come in pairs (like maybe one gets stuck
 	// we would be stuck waiting for the next connect that might never come.)
 
+	let (rende_tx, rende_cmd) = unbounded();
+	thread::spawn(|| {watchdog(rende_cmd, 3600);});
 	loop {
+		reset(&rende_tx, 3600);
 		let (caller_media, _) = caller_sock.accept().unwrap();
 info!("got 1 {:?}", caller_media);
+
+		reset(&rende_tx, 10);
 		let (callee_media, _) = callee_sock.accept().unwrap();
 info!("got 2 {:?}", callee_media);
+
 		let shovel_er_media = caller_media.try_clone().expect("can't clone");
 		let shovel_ee_media = callee_media.try_clone().expect("can't clone");
+
 		thread::spawn(|| {
 			shovel(caller_media, callee_media, false);
 		});
