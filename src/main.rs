@@ -49,11 +49,9 @@
 // * being able to split a tcp stream into read-side and write-side.
 // * being able to select on multiple streams at the same time
 // * accept connections from a tcp stream with a timeout
-// now, i get that tokio or some other crates might have some of this
-// but it seems like it is tied to a bunch of "async" stuff that is
-// *way overkill* for something simple like this. and having to switch to
-// using crossbeam instead of the channels in std because of a (documented) 5 yr old
-// bug in the std libs seems, sketch.
+//
+// it appears that most of this functionality is available in third-party
+// crates like tokio and crossbeam
 
 use log::info;
 use std::env;
